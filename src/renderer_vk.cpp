@@ -17,10 +17,6 @@
 #	import <Metal/Metal.h>
 #endif // BX_PLATFORM_OSX
 
-#if defined(WL_EGL_PLATFORM)
-#	include <wayland-egl-backend.h>
-#endif // defined(WL_EGL_PLATFORM)
-
 namespace bgfx { namespace vk
 {
 	static char s_viewName[BGFX_CONFIG_MAX_VIEWS][BGFX_CONFIG_MAX_VIEW_NAME];
@@ -366,6 +362,20 @@ VK_IMPORT_DEVICE
 			KHR_draw_indirect_count,
 			KHR_get_physical_device_properties2,
 
+#	if BX_PLATFORM_ANDROID
+			KHR_android_surface,
+#	elif BX_PLATFORM_LINUX
+			KHR_wayland_surface,
+			KHR_xlib_surface,
+			KHR_xcb_surface,
+#	elif BX_PLATFORM_WINDOWS
+			KHR_win32_surface,
+#	elif BX_PLATFORM_OSX
+			MVK_macos_surface,
+#	elif BX_PLATFORM_NX
+			NN_vi_surface,
+#	endif
+
 			Count
 		};
 
@@ -390,6 +400,19 @@ VK_IMPORT_DEVICE
 		{ "VK_EXT_shader_viewport_index_layer",     1, false, false, true,                                                          Layer::Count },
 		{ "VK_KHR_draw_indirect_count",             1, false, false, true,                                                          Layer::Count },
 		{ "VK_KHR_get_physical_device_properties2", 1, false, false, true,                                                          Layer::Count },
+#	if BX_PLATFORM_ANDROID
+		{ VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,    1, false, false, true,                                                          Layer::Count },
+#	elif BX_PLATFORM_LINUX
+		{ VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME,    1, false, false, true,                                                          Layer::Count },
+		{ VK_KHR_XLIB_SURFACE_EXTENSION_NAME,       1, false, false, true,                                                          Layer::Count },
+		{ VK_KHR_XCB_SURFACE_EXTENSION_NAME,        1, false, false, true,                                                          Layer::Count },
+#	elif BX_PLATFORM_WINDOWS
+		{ VK_KHR_WIN32_SURFACE_EXTENSION_NAME,      1, false, false, true,                                                          Layer::Count },
+#	elif BX_PLATFORM_OSX
+		{ VK_MVK_MACOS_SURFACE_EXTENSION_NAME,      1, false, false, true,                                                          Layer::Count },
+#	elif BX_PLATFORM_NX
+		{ VK_NN_VI_SURFACE_EXTENSION_NAME,          1, false, false, true,                                                          Layer::Count },
+#	endif
 	};
 	BX_STATIC_ASSERT(Extension::Count == BX_COUNTOF(s_extension) );
 
@@ -1182,7 +1205,7 @@ VK_IMPORT_DEVICE
 #else
 				"libvulkan.so.1"
 #endif // BX_PLATFORM_*
-					);
+				);
 
 			if (NULL == m_vulkan1Dll)
 			{
@@ -1248,12 +1271,11 @@ VK_IMPORT
 				}
 
 				uint32_t numEnabledExtensions = 0;
-				const char* enabledExtension[Extension::Count + 2];
+				const char* enabledExtension[Extension::Count + 1];
 
 				if (!headless)
 				{
 					enabledExtension[numEnabledExtensions++] = VK_KHR_SURFACE_EXTENSION_NAME;
-					enabledExtension[numEnabledExtensions++] = KHR_SURFACE_EXTENSION_NAME;
 				}
 
 				for (uint32_t ii = 0; ii < Extension::Count; ++ii)
@@ -4153,10 +4175,10 @@ VK_IMPORT_DEVICE
 				{
 				case UniformType::Mat3:
 				case UniformType::Mat3|kUniformFragmentBit:
-					 {
+					{
 						 float* value = (float*)data;
 						 for (uint32_t ii = 0, count = num/3; ii < count; ++ii,  loc += 3*16, value += 9)
-						 {
+						{
 							 Matrix4 mtx;
 							 mtx.un.val[ 0] = value[0];
 							 mtx.un.val[ 1] = value[1];
@@ -4442,7 +4464,7 @@ VK_IMPORT_DEVICE
 			StagingBufferVK result;
 			ScratchBufferVK &scratch = m_scratchStagingBuffer[m_cmd.m_currentFrameInFlight];
 
-			if (_size <= BGFX_CONFIG_MAX_STAGING_SIZE_FOR_SCRACH_BUFFER)
+			if (_size <= BGFX_CONFIG_MAX_STAGING_SIZE_FOR_SCRATCH_BUFFER)
 			{
 				const uint32_t scratchOffset = scratch.alloc(_size, _align);
 
@@ -6516,15 +6538,17 @@ VK_DESTROY
 
 		setImageMemoryBarrier(_commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
-		bimg::TextureFormat::Enum tf = bimg::TextureFormat::Enum(m_textureFormat);
-		const bimg::ImageBlockInfo &blockInfo = bimg::getBlockInfo(tf);
-		for (uint32_t i = 0; i < _bufferImageCopyCount; ++i) {
+		bimg::TextureFormat::Enum format = bimg::TextureFormat::Enum(m_textureFormat);
+		const bimg::ImageBlockInfo& blockInfo = bimg::getBlockInfo(format);
+		for (uint32_t ii = 0; ii < _bufferImageCopyCount; ++ii)
+		{
 			BX_ASSERT(
-				  bx::uint32_mod(_bufferImageCopy[i].bufferOffset, blockInfo.blockSize) == 0
+				  bx::uint32_mod(_bufferImageCopy[ii].bufferOffset, blockInfo.blockSize) == 0
 				, "Misaligned texture of type %s to offset %u, which is not a multiple of %u."
-				, bimg::getName(tf), _bufferImageCopy[i].bufferOffset, blockInfo.blockSize
+				, bimg::getName(format), _bufferImageCopy[ii].bufferOffset, blockInfo.blockSize
 				);
 		}
+		BX_UNUSED(blockInfo);
 
 		vkCmdCopyBufferToImage(
 			  _commandBuffer
@@ -6709,11 +6733,10 @@ VK_DESTROY
 			m_sci.imageSharingMode      = VK_SHARING_MODE_EXCLUSIVE;
 			m_sci.queueFamilyIndexCount = 0;
 			m_sci.pQueueFamilyIndices   = NULL;
-			#ifdef BX_PLATFORM_NX
-			m_sci.preTransform          = VK_SURFACE_TRANSFORM_INHERIT_BIT_KHR;
-			#else
-			m_sci.preTransform          = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-			#endif
+			m_sci.preTransform          = BX_ENABLED(BX_PLATFORM_NX)
+				? VK_SURFACE_TRANSFORM_INHERIT_BIT_KHR
+				: VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
+				;
 			m_sci.oldSwapchain          = VK_NULL_HANDLE;
 
 			for (uint32_t ii = 0; ii < BX_COUNTOF(m_backBufferColorImageView); ++ii)
@@ -6932,22 +6955,23 @@ VK_DESTROY
 		}
 #elif BX_PLATFORM_LINUX
 		{
-#if     defined(WL_EGL_PLATFORM)
 			if (g_platformData.type == bgfx::NativeWindowHandleType::Wayland)
 			{
+				BGFX_FATAL(s_extension[Extension::KHR_wayland_surface].m_supported, Fatal::UnableToInitialize, VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME " not supported");
+				BGFX_FATAL(NULL != vkCreateWaylandSurfaceKHR, Fatal::UnableToInitialize, "vkCreateWaylandSurfaceKHR == 0");
 				VkWaylandSurfaceCreateInfoKHR sci;
 				sci.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
 				sci.pNext = NULL;
 				sci.flags = 0;
 				sci.display = (wl_display*)g_platformData.ndt;
-				sci.surface = (wl_surface*)((wl_egl_window*)m_nwh)->surface;
+				sci.surface = (wl_surface*)m_nwh;
 				result = vkCreateWaylandSurfaceKHR(instance, &sci, allocatorCb, &m_surface);
 			}
 			else
-#endif // defined(WL_EGL_PLATFORM)
 			{
-				if (NULL != vkCreateXlibSurfaceKHR)
+				if (s_extension[Extension::KHR_xlib_surface].m_supported)
 				{
+					BGFX_FATAL(NULL != vkCreateXlibSurfaceKHR, Fatal::UnableToInitialize, "vkCreateXlibSurfaceKHR == 0")
 					VkXlibSurfaceCreateInfoKHR sci;
 					sci.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
 					sci.pNext = NULL;
@@ -6957,7 +6981,7 @@ VK_DESTROY
 					result = vkCreateXlibSurfaceKHR(instance, &sci, allocatorCb, &m_surface);
 				}
 
-				if (VK_SUCCESS != result)
+				if (VK_SUCCESS != result && s_extension[Extension::KHR_xcb_surface].m_supported)
 				{
 					void* xcbdll = bx::dlopen("libX11-xcb.so.1");
 
@@ -6968,6 +6992,8 @@ VK_DESTROY
 						PFN_XGETXCBCONNECTION XGetXCBConnection = (PFN_XGETXCBCONNECTION)bx::dlsym(xcbdll, "XGetXCBConnection");
 
 						union { void* ptr; xcb_window_t window; } cast = { m_nwh };
+
+						BGFX_FATAL(NULL != vkCreateXcbSurfaceKHR, Fatal::UnableToInitialize, "vkCreateXcbSurfaceKHR == 0")
 
 						VkXcbSurfaceCreateInfoKHR sci;
 						sci.sType      = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
@@ -7022,6 +7048,16 @@ VK_DESTROY
 				result = vkCreateMacOSSurfaceMVK(instance, &sci, allocatorCb, &m_surface);
 			}
 		}
+#elif BX_PLATFORM_NX
+		if (NULL != vkCreateViSurfaceNN)
+		{
+			VkViSurfaceCreateInfoNN sci;
+			sci.sType  = VK_STRUCTURE_TYPE_VI_SURFACE_CREATE_INFO_NN;
+			sci.pNext  = NULL;
+			sci.flags  = 0;
+			sci.window = m_nwh;
+			result = vkCreateViSurfaceNN(instance, &sci, allocatorCb, &m_surface);
+		}
 #else
 #	error "Figure out KHR surface..."
 #endif // BX_PLATFORM_
@@ -7063,6 +7099,12 @@ VK_DESTROY
 		const VkPhysicalDevice physicalDevice = s_renderVK->m_physicalDevice;
 		const VkDevice device = s_renderVK->m_device;
 		const VkAllocationCallbacks* allocatorCb = s_renderVK->m_allocatorCb;
+
+		// Waiting for the device to be idle seems to get rid of VK_DEVICE_LOST
+		// upon resizing the window quickly. (See https://github.com/mpv-player/mpv/issues/8360
+		// and https://github.com/bkaradzic/bgfx/issues/3227).
+		result = vkDeviceWaitIdle(device);
+		BX_WARN(VK_SUCCESS == result, "Create swapchain error: vkDeviceWaitIdle() failed: %d: %s", result, getName(result));
 
 		VkSurfaceCapabilitiesKHR surfaceCapabilities;
 		result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, m_surface, &surfaceCapabilities);
