@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2024 Branimir Karadzic. All rights reserved.
+ * Copyright 2011-2025 Branimir Karadzic. All rights reserved.
  * License: https://github.com/bkaradzic/bgfx/blob/master/LICENSE
  */
 
@@ -86,7 +86,7 @@ namespace bgfx { namespace gl
 		}
 		else
 		{
-			m_primary = createSwapChain((void*)canvas, (int)_width, (int)_height) );
+			m_primary = createSwapChain((void*)canvas, (int)_width, (int)_height);
 		}
 
 		if (0 != _width
